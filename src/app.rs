@@ -585,9 +585,7 @@ impl SteamAccountManagerApp {
                             {
                                 actions.push(AccountAction::CopyGuard(id.clone()));
                             }
-                            if account.steam_id.is_some()
-                                && ui.small_button("Profiel").clicked()
-                            {
+                            if account.steam_id.is_some() && ui.small_button("Profiel").clicked() {
                                 actions.push(AccountAction::OpenProfile(id.clone()));
                             }
                             if ui.small_button("Details").clicked() {
