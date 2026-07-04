@@ -37,6 +37,14 @@ cargo build --release
 cargo run --release
 ```
 
+## Tests
+
+Headless testsuite voor alle feature-logica (43 tests). Zie [TESTING.md](TESTING.md).
+
+```bash
+cargo test
+```
+
 ## GUI
 
 - Sidebar met tabs: Accounts, Wachtwoord, Account maken, Proxies
