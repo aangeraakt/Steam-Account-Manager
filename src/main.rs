@@ -3,14 +3,19 @@
 mod accounts;
 mod app;
 mod launch;
+mod password;
+mod proxy;
+mod register;
+mod settings;
 mod steam;
 mod storage;
+mod web;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 720.0])
-            .with_min_inner_size([640.0, 480.0])
+            .with_inner_size([1100.0, 760.0])
+            .with_min_inner_size([900.0, 600.0])
             .with_title("Steam Account Manager"),
         ..Default::default()
     };

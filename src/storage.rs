@@ -1,4 +1,4 @@
-use crate::accounts::AccountStore;
+use crate::settings::AppData;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -30,42 +30,51 @@ impl SecureStorage {
         })
     }
 
-    pub fn load(&self) -> Result<AccountStore> {
+    pub fn load(&self) -> Result<AppData> {
         if !self.data_path.exists() {
-            return Ok(AccountStore::new());
+            return Ok(AppData::default());
         }
-        let encrypted = fs::read(&self.data_path).context("Kon accounts niet lezen")?;
+        let encrypted = fs::read(&self.data_path).context("Kon data niet lezen")?;
         if encrypted.len() < 12 {
-            anyhow::bail!("Ongeldig accountbestand");
+            anyhow::bail!("Ongeldig databestand");
         }
         let key = self.load_or_create_key()?;
         let cipher = Aes256Gcm::new_from_slice(&key).context("Kon cipher niet initialiseren")?;
         let nonce = Nonce::from_slice(&encrypted[..12]);
         let plaintext = cipher
             .decrypt(nonce, &encrypted[12..])
-            .map_err(|_| anyhow::anyhow!("Kon accounts niet ontsleutelen"))?;
-        let mut store: AccountStore =
-            serde_json::from_slice(&plaintext).context("Kon accounts niet parsen")?;
-        for account in &mut store.accounts {
+            .map_err(|_| anyhow::anyhow!("Kon data niet ontsleutelen"))?;
+        let mut data: AppData = match serde_json::from_slice(&plaintext) {
+            Ok(data) => data,
+            Err(_) => {
+                let store: crate::accounts::AccountStore =
+                    serde_json::from_slice(&plaintext).context("Kon data niet parsen")?;
+                AppData {
+                    accounts: store,
+                    settings: crate::settings::AppSettings::default(),
+                }
+            }
+        };
+        for account in &mut data.accounts.accounts {
             account.sync_search_fields();
         }
-        Ok(store)
+        Ok(data)
     }
 
-    pub fn save(&self, store: &AccountStore) -> Result<()> {
+    pub fn save(&self, data: &AppData) -> Result<()> {
         let key = self.load_or_create_key()?;
         let cipher = Aes256Gcm::new_from_slice(&key).context("Kon cipher niet initialiseren")?;
-        let plaintext = serde_json::to_vec(store).context("Kon accounts niet serialiseren")?;
+        let plaintext = serde_json::to_vec(data).context("Kon data niet serialiseren")?;
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext = cipher
             .encrypt(nonce, plaintext.as_ref())
-            .map_err(|_| anyhow::anyhow!("Kon accounts niet versleutelen"))?;
+            .map_err(|_| anyhow::anyhow!("Kon data niet versleutelen"))?;
         let mut output = Vec::with_capacity(12 + ciphertext.len());
         output.extend_from_slice(&nonce_bytes);
         output.extend_from_slice(&ciphertext);
-        fs::write(&self.data_path, output).context("Kon accounts niet opslaan")?;
+        fs::write(&self.data_path, output).context("Kon data niet opslaan")?;
         Ok(())
     }
 

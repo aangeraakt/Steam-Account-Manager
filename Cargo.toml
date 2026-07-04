@@ -1,6 +1,6 @@
 [package]
 name = "steam-account-manager"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -20,9 +20,11 @@ sha2 = "0.10"
 rand = "0.8"
 base64 = "0.22"
 open = "5"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies"] }
 keyvalues-parser = "0.2.4"
 regex = "1"
+url = "2"
+urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

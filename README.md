@@ -2,52 +2,47 @@
 
 Simple & Lightweight - Steam Account Manager
 
-Een Rust desktop applicatie met een eenvoudige GUI (egui/eframe) voor het beheren van meerdere Steam accounts. Gebouwd in dezelfde stijl als [Driver-Updater](https://github.com/aangeraakt/Driver-Updater).
+Een Rust desktop applicatie met egui/eframe voor het beheren van meerdere Steam accounts.
 
 ## Features
 
-- Accounts toevoegen, bewerken en verwijderen
-- Automatische validatie bij toevoegen/bewerken via Steam API
-- Inloggen en Steam client starten
-- Steam Guard ondersteuning (e-mail code, authenticator, mobiele bevestiging)
-- Automatische Guard codes met shared secret
-- Refresh token opslag voor snelle hervalidatie
-- Wachtwoord reset via Steam help pagina
+### Accounts
+- Toevoegen, bewerken, verwijderen en zoeken
+- Automatische validatie via Steam API
+- Inloggen met Steam client switch
+- Steam Guard (e-mail, authenticator, mobiele bevestiging)
+- Auto Guard codes via shared secret
 - Versleutelde lokale opslag (AES-256-GCM)
-- Zoeken en filteren op accounts
 
-## Vereisten
+### Wachtwoord tools
+- Genereer sterke wachtwoorden
+- Automatisch wachtwoord wijzigen via Steam Help wizard
+- Auto Steam Guard / mobiele bevestiging met identity secret
 
-- Rust 1.85+ (via `rust-toolchain.toml`)
-- Linux: `libgtk-3-dev`, `libxcb-render0-dev`, `libxcb-shape0-dev`, `libxcb-xfixes0-dev`, `libxkbcommon-dev`
-- Steam client geïnstalleerd (optioneel, voor direct inloggen)
+### Account registratie
+- Steam account aanmaken via store API
+- Proxy per registratie (bijv. TR voor Turks account)
+- Captcha ophalen en e-mail verificatie flow
+
+### Proxy manager
+- Proxies handmatig toevoegen
+- Ophalen per land (proxyscrape)
+- Lokaal genereren (host + poort range)
+- Check alive + latency + IP
 
 ## Bouwen
 
 ```bash
 cargo build --release
-```
-
-## Uitvoeren
-
-```bash
 cargo run --release
 ```
 
-## Gebruik
+## GUI
 
-1. Klik op **Account toevoegen** en vul gebruikersnaam en wachtwoord in
-2. Het account wordt automatisch gevalideerd tegen Steam
-3. Bij Steam Guard verschijnt een prompt voor de verificatiecode
-4. Selecteer een account en klik **Inloggen** om Steam te starten
-5. Gebruik **Guard code** om een TOTP code te kopiëren (met shared secret)
-
-Geavanceerde opties (shared secret, machine token) zijn beschikbaar onder het uitklapmenu bij toevoegen/bewerken.
-
-## Data opslag
-
-Accounts worden versleuteld opgeslagen in de applicatie data directory. De locatie wordt onderaan het venster getoond.
+- Sidebar met tabs: Accounts, Wachtwoord, Account maken, Proxies
+- Overzicht panel met statistieken
+- Modale dialogen voor Guard en CRUD
 
 ## Disclaimer
 
-Deze applicatie is niet geaffilieerd met Valve Corporation. Gebruik op eigen risico en in overeenstemming met de [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/).
+Niet geaffilieerd met Valve Corporation. Gebruik in overeenstemming met de Steam Subscriber Agreement.
