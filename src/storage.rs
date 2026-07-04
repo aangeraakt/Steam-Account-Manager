@@ -30,6 +30,16 @@ impl SecureStorage {
         })
     }
 
+    pub fn with_paths(data_path: PathBuf, key_path: PathBuf) -> Result<Self> {
+        if let Some(parent) = data_path.parent() {
+            fs::create_dir_all(parent).context("Kon data directory niet aanmaken")?;
+        }
+        Ok(Self {
+            data_path,
+            key_path,
+        })
+    }
+
     pub fn load(&self) -> Result<AppData> {
         if !self.data_path.exists() {
             return Ok(AppData::default());
@@ -101,5 +111,44 @@ impl SecureStorage {
             .parent()
             .map(|p| p.display().to_string())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{account_from_form, AccountFormInput};
+    use crate::settings::AppData;
+    use tempfile::TempDir;
+
+    #[test]
+    fn encrypted_roundtrip_preserves_accounts_and_settings() {
+        let dir = TempDir::new().unwrap();
+        let storage =
+            SecureStorage::with_paths(dir.path().join("accounts.enc"), dir.path().join("key.bin"))
+                .unwrap();
+        let mut data = AppData::default();
+        data.accounts.add(account_from_form(&AccountFormInput {
+            username: "tester".into(),
+            password: "secret".into(),
+            alias: "Main".into(),
+            ..Default::default()
+        }));
+        data.settings.register_country = "NL".into();
+        storage.save(&data).unwrap();
+        let loaded = storage.load().unwrap();
+        assert_eq!(loaded.accounts.accounts.len(), 1);
+        assert_eq!(loaded.accounts.accounts[0].username, "tester");
+        assert_eq!(loaded.settings.register_country, "NL");
+    }
+
+    #[test]
+    fn load_missing_file_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let storage =
+            SecureStorage::with_paths(dir.path().join("missing.enc"), dir.path().join("key.bin"))
+                .unwrap();
+        let data = storage.load().unwrap();
+        assert!(data.accounts.accounts.is_empty());
     }
 }

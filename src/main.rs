@@ -1,15 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod accounts;
-mod app;
-mod launch;
-mod password;
-mod proxy;
-mod register;
-mod settings;
-mod steam;
-mod storage;
-mod web;
+use steam_account_manager::app::SteamAccountManagerApp;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -23,6 +14,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Steam Account Manager",
         options,
-        Box::new(|cc| Ok(Box::new(app::SteamAccountManagerApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(SteamAccountManagerApp::new(cc)))),
     )
 }

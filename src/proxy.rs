@@ -149,6 +149,55 @@ pub async fn fetch_public_proxies(country: &str, limit: usize) -> Result<Vec<Str
         .collect())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_http_proxy_with_auth() {
+        let entry = parse_proxy_line("http://user:pass@1.2.3.4:8080", "NL", "test").unwrap();
+        assert_eq!(entry.scheme, "http");
+        assert_eq!(entry.host, "1.2.3.4");
+        assert_eq!(entry.port, 8080);
+        assert_eq!(entry.username.as_deref(), Some("user"));
+        assert_eq!(entry.password.as_deref(), Some("pass"));
+        assert_eq!(entry.country, "NL");
+    }
+
+    #[test]
+    fn parse_bare_host_port_defaults_to_http() {
+        let entry = parse_proxy_line("10.0.0.1:3128", "TR", "x").unwrap();
+        assert_eq!(entry.scheme, "http");
+        assert_eq!(entry.to_url(), "http://10.0.0.1:3128");
+    }
+
+    #[test]
+    fn parse_socks5_scheme() {
+        let entry = parse_proxy_line("socks5://127.0.0.1:9050", "US", "").unwrap();
+        assert_eq!(entry.scheme, "socks5");
+    }
+
+    #[test]
+    fn reject_invalid_proxy_lines() {
+        assert!(parse_proxy_line("", "NL", "").is_err());
+        assert!(parse_proxy_line("nocolon", "NL", "").is_err());
+    }
+
+    #[test]
+    fn generate_local_proxies_increments_ports() {
+        let lines = generate_local_proxies("127.0.0.1", 9000, 3);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains(":9000"));
+        assert!(lines[2].contains(":9002"));
+    }
+
+    #[test]
+    fn display_uses_label_when_present() {
+        let entry = parse_proxy_line("1.1.1.1:80", "DE", "Primary").unwrap();
+        assert!(entry.display().contains("Primary"));
+    }
+}
+
 pub fn generate_local_proxies(base_host: &str, start_port: u16, count: u16) -> Vec<String> {
     (0..count)
         .map(|i| format!("http://{base_host}:{}", start_port + i))

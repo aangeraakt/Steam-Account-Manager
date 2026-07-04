@@ -70,7 +70,7 @@ pub async fn change_account_password(request: PasswordChangeRequest) -> Result<S
     .context("Kon niet inloggen voor wachtwoord wijziging")?;
 
     let mut web = WebClient::new(request.proxy.as_ref())?;
-    let cookies = build_cookie_strings(&auth, &request.username)?;
+    let cookies = build_auth_cookies(&auth, &request.username)?;
     web.set_cookies(&cookies);
     web.ensure_session_id("help.steampowered.com");
 
@@ -201,7 +201,7 @@ struct EncryptedPass {
     timestamp: String,
 }
 
-fn build_cookie_strings(auth: &crate::steam::AuthResult, username: &str) -> Result<Vec<String>> {
+pub fn build_auth_cookies(auth: &crate::steam::AuthResult, username: &str) -> Result<Vec<String>> {
     let mut cookies = vec![
         "mobileClient=android".to_string(),
         "mobileClientVersion=777777 3.0.0".to_string(),
@@ -393,4 +393,42 @@ async fn try_auto_mobile_confirm(
         )
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::steam::AuthResult;
+
+    #[test]
+    fn build_auth_cookies_includes_steam_login_when_token_present() {
+        let auth = AuthResult {
+            steam_id: Some("76561198000000000".into()),
+            persona_name: None,
+            avatar_url: None,
+            refresh_token: Some("refresh-token".into()),
+            machine_token: None,
+        };
+        let cookies = build_auth_cookies(&auth, "user").unwrap();
+        assert!(cookies.iter().any(|c| c.starts_with("steamLogin=")));
+        assert!(cookies.iter().any(|c| c.contains("refresh-token")));
+    }
+
+    #[test]
+    fn rejects_same_password_change_request() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt.block_on(change_account_password(PasswordChangeRequest {
+            username: "user".into(),
+            password: "same".into(),
+            shared_secret: None,
+            identity_secret: None,
+            steam_id: None,
+            machine_token: None,
+            new_password: Some("same".into()),
+            proxy: None,
+            guard_rx: None,
+            guard_notify: None,
+        }));
+        assert!(err.is_err());
+    }
 }

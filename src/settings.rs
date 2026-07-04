@@ -29,3 +29,17 @@ pub struct AppData {
     pub accounts: crate::accounts::AccountStore,
     pub settings: AppSettings,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_use_turkey_proxy_defaults() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.register_country, "TR");
+        assert_eq!(settings.proxy_fetch_country, "TR");
+        assert_eq!(settings.proxy_host_template, "127.0.0.1");
+        assert_eq!(settings.proxy_start_port, 10000);
+    }
+}

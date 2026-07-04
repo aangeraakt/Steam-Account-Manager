@@ -3,6 +3,14 @@ name = "steam-account-manager"
 version = "0.2.0"
 edition = "2021"
 
+[lib]
+name = "steam_account_manager"
+path = "src/lib.rs"
+
+[[bin]]
+name = "steam-account-manager"
+path = "src/main.rs"
+
 [dependencies]
 eframe = "0.31"
 egui = "0.31"
@@ -25,6 +33,11 @@ keyvalues-parser = "0.2.4"
 regex = "1"
 url = "2"
 urlencoding = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

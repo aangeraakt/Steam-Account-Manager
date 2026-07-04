@@ -35,7 +35,14 @@ pub struct RegisterResult {
 }
 
 pub async fn fetch_captcha(proxy: Option<&ProxyEntry>) -> Result<CaptchaInfo> {
-    let mut web = WebClient::new(proxy)?;
+    fetch_captcha_at(proxy, None).await
+}
+
+pub async fn fetch_captcha_at(
+    proxy: Option<&ProxyEntry>,
+    api_host: Option<&str>,
+) -> Result<CaptchaInfo> {
+    let mut web = WebClient::with_test_host(proxy, api_host)?;
     web.ensure_session_id("store.steampowered.com");
     let info: CaptchaInfo = web
         .get_json(
@@ -47,7 +54,11 @@ pub async fn fetch_captcha(proxy: Option<&ProxyEntry>) -> Result<CaptchaInfo> {
 }
 
 pub async fn verify_email(request: &RegisterRequest) -> Result<String> {
-    let mut web = WebClient::new(request.proxy.as_ref())?;
+    verify_email_at(request, None).await
+}
+
+pub async fn verify_email_at(request: &RegisterRequest, api_host: Option<&str>) -> Result<String> {
+    let mut web = WebClient::with_test_host(request.proxy.as_ref(), api_host)?;
     web.ensure_session_id("store.steampowered.com");
     let sessionid = web.session_id("store.steampowered.com");
     #[derive(Deserialize)]
@@ -83,6 +94,13 @@ pub async fn verify_email(request: &RegisterRequest) -> Result<String> {
 }
 
 pub async fn create_account(request: RegisterRequest) -> Result<RegisterResult> {
+    create_account_at(request, None).await
+}
+
+pub async fn create_account_at(
+    request: RegisterRequest,
+    api_host: Option<&str>,
+) -> Result<RegisterResult> {
     let username = request.username.clone().unwrap_or_else(generate_username);
     let password = request
         .password
@@ -91,10 +109,10 @@ pub async fn create_account(request: RegisterRequest) -> Result<RegisterResult> 
     let creation_sessionid = if let Some(id) = request.creation_sessionid.clone() {
         id
     } else {
-        verify_email(&request).await?
+        verify_email_at(&request, api_host).await?
     };
 
-    let mut web = WebClient::new(request.proxy.as_ref())?;
+    let mut web = WebClient::with_test_host(request.proxy.as_ref(), api_host)?;
     web.ensure_session_id("store.steampowered.com");
     let sessionid = web.session_id("store.steampowered.com");
 
@@ -154,5 +172,17 @@ pub fn country_label(code: &str) -> &'static str {
         "RU" => "Rusland",
         "FR" => "Frankrijk",
         _ => "Onbekend",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn country_label_maps_known_codes() {
+        assert_eq!(country_label("TR"), "Turkije");
+        assert_eq!(country_label("NL"), "Nederland");
+        assert_eq!(country_label("XX"), "Onbekend");
     }
 }
