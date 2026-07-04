@@ -1,5 +1,7 @@
 use crate::accounts::{AccountStatus, AccountStore, SteamAccount};
-use crate::launch::{find_steam_executable, launch_steam, open_password_reset, open_steam_profile};
+use crate::launch::{
+    find_steam_executable, open_password_reset, open_steam_profile, switch_and_login,
+};
 use crate::steam::{
     apply_auth_result, auth_channel, authenticate, generate_guard_code, guard_prompt_channel,
     mark_invalid, run_auth, validate_refresh_token, AuthRequest, GuardType,
@@ -15,6 +17,12 @@ enum AppPhase {
     Working,
 }
 
+struct LoginOutcome {
+    auth: crate::steam::AuthResult,
+    message: String,
+    launch_error: Option<String>,
+}
+
 enum WorkerMsg {
     ValidateDone {
         id: String,
@@ -22,7 +30,7 @@ enum WorkerMsg {
     },
     LoginDone {
         id: String,
-        result: Result<crate::steam::AuthResult, String>,
+        result: Result<LoginOutcome, String>,
     },
     GuardRequired {
         guard_type: GuardType,
@@ -208,26 +216,14 @@ impl SteamAccountManagerApp {
                     self.guard_tx = None;
                     self.dialog = Dialog::None;
                     match result {
-                        Ok(auth) => {
-                            let username = if let Some(account) = self.store.get_mut(&id) {
-                                apply_auth_result(account, &auth, true);
-                                account.username.clone()
-                            } else {
-                                String::new()
-                            };
+                        Ok(login) => {
+                            if let Some(account) = self.store.get_mut(&id) {
+                                apply_auth_result(account, &login.auth, true);
+                            }
                             self.persist(ctx);
-                            if !username.is_empty() {
-                                match launch_steam(&username, None) {
-                                    Ok(()) => {
-                                        self.status_message =
-                                            format!("Ingelogd en Steam gestart voor {username}.");
-                                    }
-                                    Err(e) => {
-                                        self.status_message = format!("Ingelogd als {username}.");
-                                        self.error_message =
-                                            Some(format!("Steam starten mislukt: {e}"));
-                                    }
-                                }
+                            self.status_message = login.message;
+                            if let Some(err) = login.launch_error {
+                                self.error_message = Some(err);
                             }
                         }
                         Err(e) => {
@@ -311,7 +307,10 @@ impl SteamAccountManagerApp {
         self.phase = AppPhase::Working;
         self.pending_operation = Some(id.clone());
         self.error_message = None;
-        self.status_message = format!("Inloggen als '{}'...", account.display_name());
+        self.status_message = format!(
+            "Inloggen als '{}' — Steam wordt afgesloten en opnieuw gestart...",
+            account.display_name()
+        );
 
         let (guard_tx, guard_rx) = auth_channel();
         let (guard_notify_tx, guard_notify_rx) = guard_prompt_channel();
@@ -346,6 +345,26 @@ impl SteamAccountManagerApp {
                 .await
                 .map_err(|e| e.to_string())
             });
+            let result = match result {
+                Ok(auth) => {
+                    let username = account.username.clone();
+                    let password = account.password.clone();
+                    let steam_id = auth.steam_id.clone();
+                    match switch_and_login(&username, &password, steam_id.as_deref()) {
+                        Ok(()) => Ok(LoginOutcome {
+                            message: format!("Account gewisseld en Steam gestart voor {username}."),
+                            auth,
+                            launch_error: None,
+                        }),
+                        Err(e) => Ok(LoginOutcome {
+                            message: format!("Ingelogd als {username}."),
+                            auth,
+                            launch_error: Some(format!("Steam starten mislukt: {e}")),
+                        }),
+                    }
+                }
+                Err(e) => Err(e),
+            };
             let _ = tx.send(WorkerMsg::LoginDone { id, result });
             ctx.request_repaint();
         });
