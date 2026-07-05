@@ -154,3 +154,41 @@ impl Default for AccountStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_add_get_remove_and_sort() {
+        let mut store = AccountStore::new();
+        let mut b = SteamAccount::new("bravo".into(), "p".into());
+        b.sync_search_fields();
+        let mut a = SteamAccount::new("alpha".into(), "p".into());
+        a.sync_search_fields();
+        store.add(b);
+        store.add(a);
+        assert_eq!(store.accounts[0].username, "alpha");
+        let id = store.accounts[0].id.clone();
+        assert!(store.get(&id).is_some());
+        assert!(store.remove(&id));
+        assert!(store.get(&id).is_none());
+    }
+
+    #[test]
+    fn matches_filter_on_alias_and_steam_id() {
+        let mut account = SteamAccount::new("hidden".into(), "p".into());
+        account.alias = "Visible".into();
+        account.steam_id = Some("76561198000000000".into());
+        account.sync_search_fields();
+        assert!(account.matches_filter("visible"));
+        assert!(account.matches_filter("7656119"));
+        assert!(!account.matches_filter("missing"));
+    }
+
+    #[test]
+    fn status_labels_are_dutch() {
+        assert_eq!(AccountStatus::Valid.label(), "Geldig");
+        assert_eq!(AccountStatus::GuardRequired.label(), "Guard vereist");
+    }
+}

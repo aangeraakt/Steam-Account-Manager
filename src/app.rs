@@ -1,14 +1,22 @@
 use crate::accounts::{AccountStatus, SteamAccount};
+use crate::core::{
+    account_from_form, add_proxies_from_lines, add_proxy_from_input, apply_login_success,
+    apply_password_changed, apply_proxy_check, apply_register_success, apply_validate_failure,
+    apply_validate_success, delete_account, import_fetched_proxies, register_request_from_form,
+    remove_dead_proxies, remove_proxy, selected_proxy, sync_settings_from_ui,
+    update_account_from_form, validate_account_form, validate_register_form, AccountFormInput,
+    RegisterFormInput, RegisterSuccess,
+};
 use crate::launch::{
     find_steam_executable, open_password_reset, open_steam_profile, switch_and_login,
 };
 use crate::password::{change_account_password, PasswordChangeRequest};
-use crate::proxy::{check_proxy, fetch_public_proxies, parse_proxy_line, ProxyEntry};
-use crate::register::{country_label, create_account, fetch_captcha, RegisterRequest};
+use crate::proxy::{check_proxy, fetch_public_proxies, ProxyEntry};
+use crate::register::{country_label, create_account, fetch_captcha};
 use crate::settings::AppData;
 use crate::steam::{
-    apply_auth_result, auth_channel, authenticate, generate_guard_code, guard_prompt_channel,
-    mark_invalid, run_auth, validate_refresh_token, AuthRequest, GuardType,
+    auth_channel, authenticate, generate_guard_code, guard_prompt_channel, run_auth,
+    validate_refresh_token, AuthRequest, GuardType,
 };
 use crate::storage::SecureStorage;
 use crate::web::generate_secure_password;
@@ -244,10 +252,13 @@ impl SteamAccountManagerApp {
     }
 
     fn save_data(&mut self) {
-        self.data.settings.register_country = self.register_country.clone();
-        self.data.settings.proxy_fetch_country = self.proxy_country_fetch.clone();
-        self.data.settings.proxy_host_template = self.proxy_host_template.clone();
-        self.data.settings.proxy_start_port = self.proxy_start_port;
+        sync_settings_from_ui(
+            &mut self.data,
+            &self.register_country,
+            &self.proxy_country_fetch,
+            &self.proxy_host_template,
+            self.proxy_start_port,
+        );
         if let Err(e) = self.storage.save(&self.data) {
             self.error_message = Some(format!("Opslaan mislukt: {e}"));
         }
@@ -271,17 +282,13 @@ impl SteamAccountManagerApp {
                     self.guard_tx = None;
                     match result {
                         Ok(auth) => {
-                            if let Some(account) = self.data.accounts.get_mut(&id) {
-                                apply_auth_result(account, &auth, false);
-                                self.status_message =
-                                    format!("Account '{}' gevalideerd.", account.display_name());
-                            }
+                            self.status_message =
+                                apply_validate_success(&mut self.data, &id, &auth)
+                                    .unwrap_or_else(|| "Validatie voltooid.".into());
                             self.persist(ctx);
                         }
                         Err(e) => {
-                            if let Some(account) = self.data.accounts.get_mut(&id) {
-                                mark_invalid(account);
-                            }
+                            apply_validate_failure(&mut self.data, &id);
                             self.error_message = Some(e);
                             self.status_message = "Validatie mislukt.".into();
                             self.persist(ctx);
@@ -295,9 +302,7 @@ impl SteamAccountManagerApp {
                     self.dialog = Dialog::None;
                     match result {
                         Ok(login) => {
-                            if let Some(account) = self.data.accounts.get_mut(&id) {
-                                apply_auth_result(account, &login.auth, true);
-                            }
+                            apply_login_success(&mut self.data, &id, &login.auth);
                             self.persist(ctx);
                             self.status_message = login.message;
                             if let Some(err) = login.launch_error {
@@ -321,10 +326,7 @@ impl SteamAccountManagerApp {
                     self.dialog = Dialog::None;
                     match result {
                         Ok(new_password) => {
-                            if let Some(account) = self.data.accounts.get_mut(&id) {
-                                account.password = new_password.clone();
-                                account.status = AccountStatus::Valid;
-                            }
+                            apply_password_changed(&mut self.data, &id, &new_password);
                             self.generated_password = new_password.clone();
                             self.persist(ctx);
                             self.status_message =
@@ -342,15 +344,17 @@ impl SteamAccountManagerApp {
                     match result {
                         Ok(reg) => {
                             if reg.b_success {
-                                let mut account =
-                                    SteamAccount::new(reg.username.clone(), reg.password.clone());
-                                account.email = Some(reg.email.clone());
-                                account.alias =
-                                    format!("{} account", country_label(&self.register_country));
-                                account.sync_search_fields();
-                                self.data.accounts.add(account);
+                                self.status_message = apply_register_success(
+                                    &mut self.data,
+                                    RegisterSuccess {
+                                        username: reg.username,
+                                        password: reg.password,
+                                        email: reg.email,
+                                        message: reg.message,
+                                    },
+                                    &self.register_country,
+                                );
                                 self.persist(ctx);
-                                self.status_message = reg.message;
                                 self.tab = AppTab::Accounts;
                             } else {
                                 self.error_message = Some(reg.message);
@@ -374,38 +378,31 @@ impl SteamAccountManagerApp {
                         Err(e) => self.error_message = Some(e),
                     }
                 }
-                WorkerMsg::ProxiesFetched(result) => {
-                    self.phase = AppPhase::Idle;
-                    match result {
-                        Ok(lines) => {
-                            let country = self.proxy_country_fetch.clone();
-                            for line in lines {
-                                if let Ok(entry) = parse_proxy_line(&line, &country, "") {
-                                    self.data.settings.proxies.push(entry);
-                                }
-                            }
-                            self.persist(ctx);
-                            self.status_message = format!(
-                                "{} proxy(s) toegevoegd.",
-                                self.data.settings.proxies.len()
-                            );
-                        }
-                        Err(e) => self.error_message = Some(e),
-                    }
-                }
                 WorkerMsg::ProxyChecked {
                     id,
                     alive,
                     latency_ms,
                     ip,
                 } => {
-                    if let Some(proxy) = self.data.settings.proxies.iter_mut().find(|p| p.id == id)
-                    {
-                        proxy.alive = Some(alive);
-                        proxy.latency_ms = Some(latency_ms);
-                        proxy.external_ip = ip;
-                    }
+                    apply_proxy_check(&mut self.data.settings, &id, alive, latency_ms, ip);
                     self.persist(ctx);
+                }
+                WorkerMsg::ProxiesFetched(result) => {
+                    self.phase = AppPhase::Idle;
+                    match result {
+                        Ok(lines) => {
+                            let country = self.proxy_country_fetch.clone();
+                            let added = import_fetched_proxies(
+                                &mut self.data.settings,
+                                lines,
+                                &country,
+                                25,
+                            );
+                            self.persist(ctx);
+                            self.status_message = format!("{added} proxy(s) toegevoegd.");
+                        }
+                        Err(e) => self.error_message = Some(e),
+                    }
                 }
                 WorkerMsg::ProxyCheckDone => {
                     self.phase = AppPhase::Idle;
@@ -555,33 +552,23 @@ impl SteamAccountManagerApp {
     }
 
     fn add_account(&mut self, ctx: &egui::Context) {
-        if self.account_form.username.trim().is_empty() {
-            self.account_form.error = Some("Gebruikersnaam is verplicht.".into());
+        if let Err(msg) =
+            validate_account_form(&self.account_form.username, &self.account_form.password)
+        {
+            self.account_form.error = Some(msg.into());
             return;
         }
-        if self.account_form.password.is_empty() {
-            self.account_form.error = Some("Wachtwoord is verplicht.".into());
-            return;
-        }
-        let mut account = SteamAccount::new(
-            self.account_form.username.trim().to_string(),
-            self.account_form.password.clone(),
-        );
-        account.alias = self.account_form.alias.trim().to_string();
-        account.notes = self.account_form.notes.trim().to_string();
-        if !self.account_form.shared_secret.trim().is_empty() {
-            account.shared_secret = Some(self.account_form.shared_secret.trim().to_string());
-        }
-        if !self.account_form.identity_secret.trim().is_empty() {
-            account.identity_secret = Some(self.account_form.identity_secret.trim().to_string());
-        }
-        if !self.account_form.email.trim().is_empty() {
-            account.email = Some(self.account_form.email.trim().to_string());
-        }
-        if !self.account_form.machine_token.trim().is_empty() {
-            account.machine_token = Some(self.account_form.machine_token.trim().to_string());
-        }
-        account.sync_search_fields();
+        let input = AccountFormInput {
+            username: self.account_form.username.clone(),
+            password: self.account_form.password.clone(),
+            alias: self.account_form.alias.clone(),
+            notes: self.account_form.notes.clone(),
+            shared_secret: self.account_form.shared_secret.clone(),
+            identity_secret: self.account_form.identity_secret.clone(),
+            email: self.account_form.email.clone(),
+            machine_token: self.account_form.machine_token.clone(),
+        };
+        let account = account_from_form(&input);
         let id = account.id.clone();
         self.data.accounts.add(account);
         self.dialog = Dialog::None;
@@ -592,41 +579,24 @@ impl SteamAccountManagerApp {
     }
 
     fn update_account(&mut self, id: &str, ctx: &egui::Context) {
-        if self.account_form.username.trim().is_empty() {
-            self.account_form.error = Some("Gebruikersnaam is verplicht.".into());
-            return;
-        }
-        if self.account_form.password.is_empty() {
-            self.account_form.error = Some("Wachtwoord is verplicht.".into());
+        if let Err(msg) =
+            validate_account_form(&self.account_form.username, &self.account_form.password)
+        {
+            self.account_form.error = Some(msg.into());
             return;
         }
         if let Some(account) = self.data.accounts.get_mut(id) {
-            account.username = self.account_form.username.trim().to_string();
-            account.password = self.account_form.password.clone();
-            account.alias = self.account_form.alias.trim().to_string();
-            account.notes = self.account_form.notes.trim().to_string();
-            account.shared_secret = if self.account_form.shared_secret.trim().is_empty() {
-                None
-            } else {
-                Some(self.account_form.shared_secret.trim().to_string())
+            let input = AccountFormInput {
+                username: self.account_form.username.clone(),
+                password: self.account_form.password.clone(),
+                alias: self.account_form.alias.clone(),
+                notes: self.account_form.notes.clone(),
+                shared_secret: self.account_form.shared_secret.clone(),
+                identity_secret: self.account_form.identity_secret.clone(),
+                email: self.account_form.email.clone(),
+                machine_token: self.account_form.machine_token.clone(),
             };
-            account.identity_secret = if self.account_form.identity_secret.trim().is_empty() {
-                None
-            } else {
-                Some(self.account_form.identity_secret.trim().to_string())
-            };
-            account.email = if self.account_form.email.trim().is_empty() {
-                None
-            } else {
-                Some(self.account_form.email.trim().to_string())
-            };
-            account.machine_token = if self.account_form.machine_token.trim().is_empty() {
-                None
-            } else {
-                Some(self.account_form.machine_token.trim().to_string())
-            };
-            account.sync_search_fields();
-            account.status = AccountStatus::Unknown;
+            update_account_from_form(account, &input);
         }
         self.dialog = Dialog::None;
         self.account_form.clear();
@@ -635,14 +605,7 @@ impl SteamAccountManagerApp {
     }
 
     fn selected_proxy(&self) -> Option<ProxyEntry> {
-        self.selected_proxy_id.as_ref().and_then(|id| {
-            self.data
-                .settings
-                .proxies
-                .iter()
-                .find(|p| p.id == *id)
-                .cloned()
-        })
+        selected_proxy(&self.data.settings, self.selected_proxy_id.as_deref())
     }
 
     fn start_password_change(&mut self, id: String, ctx: &egui::Context) {
@@ -700,38 +663,22 @@ impl SteamAccountManagerApp {
     }
 
     fn start_register(&mut self, ctx: &egui::Context) {
-        if self.register_email.trim().is_empty() {
-            self.error_message = Some("E-mail is verplicht.".into());
-            return;
-        }
-        if self.register_captcha_gid.is_empty() || self.register_captcha_text.is_empty() {
-            self.error_message = Some("Captcha gid en code zijn verplicht.".into());
+        let form = RegisterFormInput {
+            email: self.register_email.clone(),
+            username: self.register_username.clone(),
+            password: self.register_password.clone(),
+            captcha_gid: self.register_captcha_gid.clone(),
+            captcha_text: self.register_captcha_text.clone(),
+            creation_session: self.register_creation_session.clone(),
+            country_code: self.register_country.clone(),
+        };
+        if let Err(msg) = validate_register_form(&form) {
+            self.error_message = Some(msg.into());
             return;
         }
         self.phase = AppPhase::Working;
         self.status_message = "Steam account aanmaken...".into();
-        let request = RegisterRequest {
-            email: self.register_email.trim().to_string(),
-            username: if self.register_username.trim().is_empty() {
-                None
-            } else {
-                Some(self.register_username.trim().to_string())
-            },
-            password: if self.register_password.trim().is_empty() {
-                None
-            } else {
-                Some(self.register_password.clone())
-            },
-            captcha_gid: self.register_captcha_gid.clone(),
-            captcha_text: self.register_captcha_text.clone(),
-            creation_sessionid: if self.register_creation_session.trim().is_empty() {
-                None
-            } else {
-                Some(self.register_creation_session.trim().to_string())
-            },
-            country_code: self.register_country.clone(),
-            proxy: self.selected_proxy(),
-        };
+        let request = register_request_from_form(&form, self.selected_proxy());
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         run_auth(move || {
@@ -963,12 +910,12 @@ impl SteamAccountManagerApp {
                     self.proxy_start_port,
                     self.proxy_generate_count,
                 );
-                for line in lines {
-                    if let Ok(entry) = parse_proxy_line(&line, &self.proxy_country_fetch, "Lokaal")
-                    {
-                        self.data.settings.proxies.push(entry);
-                    }
-                }
+                add_proxies_from_lines(
+                    &mut self.data.settings,
+                    &lines,
+                    &self.proxy_country_fetch,
+                    "Lokaal",
+                );
                 self.persist(ctx);
             }
         });
@@ -976,12 +923,17 @@ impl SteamAccountManagerApp {
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.proxy_input);
             if ui.button("Toevoegen").clicked() {
-                if let Ok(entry) =
-                    parse_proxy_line(&self.proxy_input, &self.proxy_country_fetch, "Handmatig")
-                {
-                    self.data.settings.proxies.push(entry);
-                    self.proxy_input.clear();
-                    self.persist(ctx);
+                match add_proxy_from_input(
+                    &mut self.data.settings,
+                    &self.proxy_input,
+                    &self.proxy_country_fetch,
+                    "Handmatig",
+                ) {
+                    Ok(_) => {
+                        self.proxy_input.clear();
+                        self.persist(ctx);
+                    }
+                    Err(e) => self.error_message = Some(e),
                 }
             }
         });
@@ -990,10 +942,7 @@ impl SteamAccountManagerApp {
                 self.start_check_all_proxies(ctx);
             }
             if ui.button("Dode verwijderen").clicked() {
-                self.data
-                    .settings
-                    .proxies
-                    .retain(|p| p.alive != Some(false));
+                remove_dead_proxies(&mut self.data.settings);
                 self.persist(ctx);
             }
         });
@@ -1030,10 +979,7 @@ impl SteamAccountManagerApp {
                     });
                 }
                 if let Some(id) = remove_id {
-                    self.data.settings.proxies.retain(|p| p.id != id);
-                    if self.selected_proxy_id.as_deref() == Some(&id) {
-                        self.selected_proxy_id = None;
-                    }
+                    remove_proxy(&mut self.data.settings, &id, &mut self.selected_proxy_id);
                     self.persist(ctx);
                 }
             });
@@ -1349,7 +1295,7 @@ impl SteamAccountManagerApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Verwijderen").clicked() {
-                        self.data.accounts.remove(id);
+                        delete_account(&mut self.data, id);
                         if self.selected_id.as_deref() == Some(id) {
                             self.selected_id = None;
                         }

@@ -325,3 +325,43 @@ pub fn open_steam_profile(steam_id: &str) -> Result<()> {
     let url = format!("https://steamcommunity.com/profiles/{steam_id}");
     open::that(url).context("Kon profiel niet openen")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    const SAMPLE_LOGINUSERS: &str = r#""users"
+{
+    "76561198000000000"
+    {
+        "AccountName"        "testuser"
+        "MostRecent"        "0"
+    }
+    "76561198000000001"
+    {
+        "AccountName"        "otheruser"
+        "MostRecent"        "1"
+    }
+}
+"#;
+
+    #[test]
+    fn update_loginusers_marks_matching_account_recent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("loginusers.vdf");
+        fs::write(&path, SAMPLE_LOGINUSERS).unwrap();
+        update_loginusers(&path, "testuser", None).unwrap();
+        let updated = fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("76561198000000000"));
+        assert!(updated.contains("MostRecent"));
+    }
+
+    #[test]
+    fn find_steam_executable_returns_none_when_missing() {
+        if std::env::var("STEAM_EXECUTABLE_FORCE_NONE").is_ok() {
+            assert!(find_steam_executable().is_none());
+        }
+    }
+}

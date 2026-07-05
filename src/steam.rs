@@ -317,3 +317,53 @@ pub fn mark_invalid(account: &mut crate::accounts::SteamAccount) {
     account.status = crate::accounts::AccountStatus::Invalid;
     account.last_validated = Some(Utc::now());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounts::{AccountStatus, SteamAccount};
+
+    #[test]
+    fn parse_profile_xml_extracts_persona_and_avatar() {
+        let xml = r#"
+<profile>
+  <steamID>TestUser</steamID>
+  <avatarFull>https://example.com/a.jpg</avatarFull>
+</profile>
+"#;
+        let profile = parse_profile_xml(xml).unwrap();
+        assert_eq!(profile.persona_name, "TestUser");
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some("https://example.com/a.jpg")
+        );
+    }
+
+    #[test]
+    fn guard_type_labels_and_input_requirements() {
+        assert!(GuardType::EmailCode.needs_input());
+        assert!(!GuardType::DeviceConfirmation.needs_input());
+        assert_eq!(GuardType::DeviceCode.label(), "Authenticator code");
+    }
+
+    #[test]
+    fn apply_auth_result_sets_valid_status() {
+        let mut account = SteamAccount::new("user".into(), "pass".into());
+        let auth = AuthResult {
+            steam_id: Some("76561198000000000".into()),
+            persona_name: Some("Name".into()),
+            avatar_url: None,
+            refresh_token: Some("token".into()),
+            machine_token: Some("machine".into()),
+        };
+        apply_auth_result(&mut account, &auth, true);
+        assert_eq!(account.status, AccountStatus::Valid);
+        assert_eq!(account.steam_id.as_deref(), Some("76561198000000000"));
+        assert!(account.last_login.is_some());
+    }
+
+    #[test]
+    fn generate_guard_code_rejects_invalid_secret() {
+        assert!(generate_guard_code("not-valid").is_err());
+    }
+}

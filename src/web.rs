@@ -10,10 +10,16 @@ pub const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 pub struct WebClient {
     client: Client,
     cookies: HashMap<String, String>,
+    test_host: Option<String>,
 }
 
 impl WebClient {
     pub fn new(proxy: Option<&ProxyEntry>) -> Result<Self> {
+        let env_host = std::env::var("STEAM_TEST_HOST").ok();
+        Self::with_test_host(proxy, env_host.as_deref())
+    }
+
+    pub fn with_test_host(proxy: Option<&ProxyEntry>, test_host: Option<&str>) -> Result<Self> {
         let mut builder = Client::builder()
             .cookie_store(true)
             .user_agent(BROWSER_UA)
@@ -24,6 +30,7 @@ impl WebClient {
         Ok(Self {
             client: builder.build().context("Kon web client niet maken")?,
             cookies: HashMap::new(),
+            test_host: test_host.map(str::to_string),
         })
     }
 
@@ -54,9 +61,10 @@ impl WebClient {
     }
 
     pub async fn get_text(&mut self, url: &str, referer: Option<&str>) -> Result<(String, Url)> {
+        let url = self.rewrite_url(url);
         let headers = default_headers(referer);
-        let req = self.client.get(url).headers(headers.clone());
-        let req = self.apply_cookies(req, url);
+        let req = self.client.get(&url).headers(headers.clone());
+        let req = self.apply_cookies(req, &url);
         let response = req.send().await.context("GET request mislukt")?;
         let final_url = response.url().clone();
         self.store_response_cookies(&response);
@@ -69,13 +77,14 @@ impl WebClient {
         url: &str,
         referer: Option<&str>,
     ) -> Result<T> {
+        let url = self.rewrite_url(url);
         let mut headers = default_headers(referer);
         headers.insert(
             "X-Requested-With",
             HeaderValue::from_static("XMLHttpRequest"),
         );
-        let req = self.client.get(url).headers(headers);
-        let req = self.apply_cookies(req, url);
+        let req = self.client.get(&url).headers(headers);
+        let req = self.apply_cookies(req, &url);
         let response = req.send().await.context("GET JSON mislukt")?;
         self.store_response_cookies(&response);
         response.json().await.context("Kon JSON niet parsen")
@@ -87,6 +96,7 @@ impl WebClient {
         form: &[(&str, &str)],
         referer: Option<&str>,
     ) -> Result<T> {
+        let url = self.rewrite_url(url);
         let mut headers = default_headers(referer);
         headers.insert(
             "X-Requested-With",
@@ -96,8 +106,8 @@ impl WebClient {
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded; charset=UTF-8"),
         );
-        let req = self.client.post(url).headers(headers).form(form);
-        let req = self.apply_cookies(req, url);
+        let req = self.client.post(&url).headers(headers).form(form);
+        let req = self.apply_cookies(req, &url);
         let response = req.send().await.context("POST request mislukt")?;
         self.store_response_cookies(&response);
         response.json().await.context("Kon JSON niet parsen")
@@ -109,16 +119,27 @@ impl WebClient {
         form: &[(&str, &str)],
         referer: Option<&str>,
     ) -> Result<String> {
+        let url = self.rewrite_url(url);
         let mut headers = default_headers(referer);
         headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded; charset=UTF-8"),
         );
-        let req = self.client.post(url).headers(headers).form(form);
-        let req = self.apply_cookies(req, url);
+        let req = self.client.post(&url).headers(headers).form(form);
+        let req = self.apply_cookies(req, &url);
         let response = req.send().await.context("POST request mislukt")?;
         self.store_response_cookies(&response);
         response.text().await.context("Kon response niet lezen")
+    }
+
+    fn rewrite_url(&self, url: &str) -> String {
+        let Some(host) = &self.test_host else {
+            return url.to_string();
+        };
+        url.replace("https://help.steampowered.com", host)
+            .replace("https://store.steampowered.com", host)
+            .replace("https://steamcommunity.com", host)
+            .replace("https://api.ipify.org", host)
     }
 
     fn apply_cookies(&self, req: reqwest::RequestBuilder, url: &str) -> reqwest::RequestBuilder {
@@ -220,4 +241,44 @@ pub fn parse_query_params(url: &Url) -> HashMap<String, String> {
     url.query_pairs()
         .map(|(k, v)| (k.into_owned(), v.into_owned()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::Url;
+
+    #[test]
+    fn generate_secure_password_has_required_classes() {
+        let password = generate_secure_password(16);
+        assert_eq!(password.len(), 16);
+        assert!(password.chars().any(|c| c.is_ascii_lowercase()));
+        assert!(password.chars().any(|c| c.is_ascii_uppercase()));
+        assert!(password.chars().any(|c| c.is_ascii_digit()));
+        assert!(password.chars().any(|c| "!@#$%&*?_-".contains(c)));
+    }
+
+    #[test]
+    fn generate_session_id_is_24_chars() {
+        let sid = generate_session_id();
+        assert_eq!(sid.len(), 24);
+        assert!(sid.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn parse_query_params_extracts_values() {
+        let url = Url::parse("https://example.com/path?s=1&account=2&reset=0").unwrap();
+        let params = parse_query_params(&url);
+        assert_eq!(params.get("s").map(String::as_str), Some("1"));
+        assert_eq!(params.get("account").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn cookie_roundtrip_on_client() {
+        let mut client = WebClient::with_test_host(None, None).unwrap();
+        client.set_cookies(&["sessionid=abc123".into()]);
+        assert_eq!(client.session_id("store.steampowered.com"), "abc123");
+        client.ensure_session_id("store.steampowered.com");
+        assert!(!client.session_id("store.steampowered.com").is_empty());
+    }
 }
